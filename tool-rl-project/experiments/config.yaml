@@ -1,0 +1,15 @@
+run_name: debug
+seed: 42
+model_name: "TinyLLM/tool-user"
+tokenizer_name: "TinyLLM/tool-user"
+train:
+  sft_epochs: 3
+  rl_steps: 500
+  per_device_batch_size: 2
+  learning_rate: 5.0e-5
+data:
+  processed_path: "data/processed/train.jsonl"
+  eval_path: "data/processed/val.jsonl"
+logging:
+  output_dir: "experiments/runs"
+  log_interval: 50
