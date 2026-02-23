@@ -1,15 +1,34 @@
+# Experiment configuration for local development
+# Change model.model_id to "mistralai/Mistral-7B" when running on Colab with A100
+
 run_name: debug
 seed: 42
-model_name: "TinyLLM/tool-user"
-tokenizer_name: "TinyLLM/tool-user"
+
+# Model configuration
+model:
+  # Model ID from Hugging Face Hub
+  # Local: "microsoft/phi-2" (small, fits on consumer GPU)
+  # Colab: "mistralai/Mistral-7B" (production model on A100)
+  model_id: "microsoft/phi-2"
+  
+  # Tokenizer ID (usually same as model_id, but can be overridden)
+  tokenizer_id: "microsoft/phi-2"
+
+# Legacy fields (for backward compatibility)
+model_name: "microsoft/phi-2"
+tokenizer_name: "microsoft/phi-2"
+
 train:
-  sft_epochs: 3
+  sft_epochs: 1
   rl_steps: 500
   per_device_batch_size: 2
   learning_rate: 5.0e-5
+  max_length: 512
+
 data:
   processed_path: "data/processed/train.jsonl"
   eval_path: "data/processed/val.jsonl"
+
 logging:
   output_dir: "experiments/runs"
-  log_interval: 50
+  log_interval: 10

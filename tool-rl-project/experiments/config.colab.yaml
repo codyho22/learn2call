@@ -1,0 +1,31 @@
+# Colab configuration for production experiments on A100
+# Copy this to config.yaml when running on Colab, or load it directly with:
+#   python src/train_sft.py --config experiments/config.colab.yaml
+
+run_name: colab_mistral
+seed: 42
+
+# Model configuration
+model:
+  # Mistral-7B for production experiments on A100
+  model_id: "mistralai/Mistral-7B"
+  tokenizer_id: "mistralai/Mistral-7B"
+
+# Legacy fields (for backward compatibility)
+model_name: "mistralai/Mistral-7B"
+tokenizer_name: "mistralai/Mistral-7B"
+
+train:
+  sft_epochs: 3
+  rl_steps: 2000
+  per_device_batch_size: 8  # Can be larger on A100
+  learning_rate: 5.0e-5
+  max_length: 512
+
+data:
+  processed_path: "data/processed/train.jsonl"
+  eval_path: "data/processed/val.jsonl"
+
+logging:
+  output_dir: "experiments/runs"
+  log_interval: 10
