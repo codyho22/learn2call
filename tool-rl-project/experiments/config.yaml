@@ -21,9 +21,13 @@ tokenizer_name: "microsoft/phi-2"
 train:
   sft_epochs: 1
   rl_steps: 500
-  per_device_batch_size: 2
+  per_device_batch_size: 1  # Reduced for longer sequences
+  gradient_accumulation_steps: 8  #Effective batch size = 1 * 8 = 8
   learning_rate: 5.0e-5
-  max_length: 512
+  warmup_steps: 100
+  max_length: 2048  # Phi-2 max context length
+  fp16: true  # Enable mixed precision for memory efficiency
+  bf16: false  # Use bf16 instead of fp16 if supported
 
 data:
   processed_path: "data/processed/train.jsonl"

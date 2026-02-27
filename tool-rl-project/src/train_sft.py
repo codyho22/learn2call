@@ -72,6 +72,12 @@ def tokenize_examples(
         if max_length and len(input_ids) > max_length:
             input_ids = input_ids[:max_length]
             labels = labels[:max_length]
+        
+        # Ensure labels is same length as input_ids (shouldn't be needed, but safety check)
+        if len(labels) < len(input_ids):
+            labels = labels + [-100] * (len(input_ids) - len(labels))
+        elif len(labels) > len(input_ids):
+            labels = labels[:len(input_ids)]
 
         attention_mask = [1] * len(input_ids)
         input_ids_list.append(input_ids)
@@ -86,7 +92,14 @@ def tokenize_examples(
 
 
 def collate_batch(batch: List[Dict[str, Any]], tokenizer: AutoTokenizer) -> Dict[str, Any]:
+    """Collate batch by padding to max length in batch."""
+    if not batch:
+        raise ValueError("Cannot collate empty batch")
+    
     max_len = max(len(item["input_ids"]) for item in batch)
+    if max_len == 0:
+        raise ValueError("Empty sequences in batch")
+    
     pad_id = tokenizer.pad_token_id
     input_ids: List[List[int]] = []
     attention_masks: List[List[int]] = []
@@ -163,22 +176,34 @@ def main() -> None:
         model.resize_token_embeddings(len(tokenizer))
 
     per_device_batch_size = get_cfg(config, "train", "per_device_batch_size", default=2)
+    gradient_accumulation_steps = get_cfg(config, "train", "gradient_accumulation_steps", default=1)
     learning_rate = get_cfg(config, "train", "learning_rate", default=5e-5)
     num_epochs = get_cfg(config, "train", "sft_epochs", default=1)
     log_interval = get_cfg(config, "logging", "log_interval", default=50)
+    warmup_steps = get_cfg(config, "train", "warmup_steps", default=100)
+    use_fp16 = get_cfg(config, "train", "fp16", default=False)
+    use_bf16 = get_cfg(config, "train", "bf16", default=False)
 
     training_args = TrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=num_epochs,
         per_device_train_batch_size=per_device_batch_size,
         per_device_eval_batch_size=per_device_batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=learning_rate,
+        warmup_steps=warmup_steps,
         logging_steps=log_interval,
         evaluation_strategy="steps" if "validation" in tokenized else "no",
+        eval_steps=log_interval if "validation" in tokenized else None,
         save_strategy="steps",
-        save_steps=log_interval,
+        save_steps=log_interval * 5,  # Save less frequently
+        save_total_limit=3,  # Keep only last 3 checkpoints
         max_steps=args.max_steps if args.max_steps else -1,
+        fp16=use_fp16,
+        bf16=use_bf16,
         report_to=[],
+        load_best_model_at_end=True if "validation" in tokenized else False,
+        metric_for_best_model="eval_loss" if "validation" in tokenized else None,
     )
 
     trainer = Trainer(
@@ -189,8 +214,28 @@ def main() -> None:
         data_collator=lambda batch: collate_batch(batch, tokenizer),
     )
 
+    print(f"\n{'='*60}")
+    print(f"Starting training with:")
+    print(f"  Model: {model_name}")
+    print(f"  Train samples: {len(tokenized['train'])}")
+    print(f"  Eval samples: {len(tokenized.get('validation', []))}")
+    print(f"  Batch size: {per_device_batch_size}")
+    print(f"  Grad accumulation: {gradient_accumulation_steps}")
+    print(f"  Effective batch: {per_device_batch_size * gradient_accumulation_steps}")
+    print(f"  Learning rate: {learning_rate}")
+    print(f"  Epochs: {num_epochs}")
+    print(f"  Max steps: {args.max_steps if args.max_steps else 'None'}")
+    print(f"  Output dir: {output_dir}")
+    print(f"{'='*60}\n")
+
     trainer.train()
-    trainer.save_model(str(output_dir / "final"))
+    
+    # Save final model and tokenizer
+    final_dir = output_dir / "final"
+    print(f"\nSaving model to {final_dir}")
+    trainer.save_model(str(final_dir))
+    tokenizer.save_pretrained(str(final_dir))
+    print(f"Training complete!")
 
 
 if __name__ == "__main__":
