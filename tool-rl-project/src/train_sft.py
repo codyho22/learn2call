@@ -19,6 +19,14 @@ from transformers import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def resolve_torch_dtype(use_fp16: bool, use_bf16: bool) -> torch.dtype | None:
+    if use_bf16:
+        return torch.bfloat16
+    if use_fp16:
+        return torch.float16
+    return None
+
+
 def load_config(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as fp:
         return yaml.safe_load(fp)
@@ -152,6 +160,9 @@ def main() -> None:
 
     train_path = resolve_path(get_cfg(config, "data", "processed_path", default="data/processed/train.jsonl"))
     eval_path = resolve_path(get_cfg(config, "data", "eval_path", default="data/processed/val.jsonl"))
+    if not train_path.exists():
+        raise FileNotFoundError(f"Training data not found: {train_path}")
+
     data_files: Dict[str, str] = {"train": str(train_path)}
     if eval_path.exists():
         data_files["validation"] = str(eval_path)
@@ -171,10 +182,6 @@ def main() -> None:
         remove_columns=dataset["train"].column_names,
     )
 
-    model = AutoModelForCausalLM.from_pretrained(model_name)
-    if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
-        model.resize_token_embeddings(len(tokenizer))
-
     per_device_batch_size = get_cfg(config, "train", "per_device_batch_size", default=2)
     gradient_accumulation_steps = get_cfg(config, "train", "gradient_accumulation_steps", default=1)
     learning_rate = get_cfg(config, "train", "learning_rate", default=5e-5)
@@ -183,6 +190,22 @@ def main() -> None:
     warmup_steps = get_cfg(config, "train", "warmup_steps", default=100)
     use_fp16 = get_cfg(config, "train", "fp16", default=False)
     use_bf16 = get_cfg(config, "train", "bf16", default=False)
+    gradient_checkpointing = get_cfg(config, "train", "gradient_checkpointing", default=False)
+    trust_remote_code = get_cfg(config, "model", "trust_remote_code", default=False)
+    torch_dtype = resolve_torch_dtype(use_fp16, use_bf16)
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        trust_remote_code=trust_remote_code,
+        torch_dtype=torch_dtype,
+    )
+    if gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+        if hasattr(model.config, "use_cache"):
+            model.config.use_cache = False
+
+    if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
+        model.resize_token_embeddings(len(tokenizer))
 
     training_args = TrainingArguments(
         output_dir=str(output_dir),
@@ -201,6 +224,7 @@ def main() -> None:
         max_steps=args.max_steps if args.max_steps else -1,
         fp16=use_fp16,
         bf16=use_bf16,
+        gradient_checkpointing=gradient_checkpointing,
         report_to=[],
         load_best_model_at_end=True if "validation" in tokenized else False,
         metric_for_best_model="eval_loss" if "validation" in tokenized else None,
@@ -225,6 +249,8 @@ def main() -> None:
     print(f"  Learning rate: {learning_rate}")
     print(f"  Epochs: {num_epochs}")
     print(f"  Max steps: {args.max_steps if args.max_steps else 'None'}")
+    print(f"  Gradient checkpointing: {gradient_checkpointing}")
+    print(f"  Trust remote code: {trust_remote_code}")
     print(f"  Output dir: {output_dir}")
     print(f"{'='*60}\n")
 

@@ -7,15 +7,15 @@ seed: 42
 # Model configuration
 model:
   # Model ID from Hugging Face Hub
-  # Local: "microsoft/phi-2" (small, fits on consumer GPU)
+  # Local: "microsoft/phi-2" (small, fits on my GPU)
   # Colab: "mistralai/Mistral-7B" (production model on A100)
   model_id: "microsoft/phi-2"
+  trust_remote_code: true
   
-  # Tokenizer ID (usually same as model_id, but can be overridden)
+  # Tokenizer ID 
   tokenizer_id: "microsoft/phi-2"
 
-# Legacy fields (for backward compatibility)
-model_name: "microsoft/phi-2"
+model_name: "microsoft/phi-2" #Legacy fields
 tokenizer_name: "microsoft/phi-2"
 
 train:
@@ -23,6 +23,7 @@ train:
   rl_steps: 500
   per_device_batch_size: 1  # Reduced for longer sequences
   gradient_accumulation_steps: 8  #Effective batch size = 1 * 8 = 8
+  gradient_checkpointing: true
   learning_rate: 5.0e-5
   warmup_steps: 100
   max_length: 2048  # Phi-2 max context length

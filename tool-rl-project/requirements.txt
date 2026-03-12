@@ -3,6 +3,8 @@ transformers
 datasets
 accelerate
 peft
+sentencepiece
+safetensors
 numpy
 pandas
 tqdm
