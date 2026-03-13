@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -9,6 +10,7 @@ import torch
 import yaml
 from datasets import DatasetDict, load_dataset
 from transformers import (
+    AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
     Trainer,
@@ -69,8 +71,20 @@ def tokenize_examples(
 
     eos_id = tokenizer.eos_token_id
     for prompt, target in zip(examples["prompt"], examples["target"]):
-        prompt_ids = tokenizer(prompt, add_special_tokens=False).input_ids
-        target_ids = tokenizer(target, add_special_tokens=False).input_ids
+        prompt_ids = tokenizer(
+            prompt,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=max_length,
+            verbose=False,
+        ).input_ids
+        target_ids = tokenizer(
+            target,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=max_length,
+            verbose=False,
+        ).input_ids
         if eos_id is not None:
             target_ids = target_ids + [eos_id]
 
@@ -194,11 +208,28 @@ def main() -> None:
     trust_remote_code = get_cfg(config, "model", "trust_remote_code", default=False)
     torch_dtype = resolve_torch_dtype(use_fp16, use_bf16)
 
+    model_config = AutoConfig.from_pretrained(
+        model_name,
+        trust_remote_code=trust_remote_code,
+    )
+    if not hasattr(model_config, "pad_token_id") or model_config.pad_token_id is None:
+        model_config.pad_token_id = tokenizer.pad_token_id
+
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         trust_remote_code=trust_remote_code,
-        torch_dtype=torch_dtype,
+        dtype=torch_dtype,
+        config=model_config,
     )
+    model_param_dtype = next(model.parameters()).dtype
+    trainer_fp16 = use_fp16 and model_param_dtype != torch.float16
+    if use_fp16 and not trainer_fp16:
+        print(
+            "Model weights are already float16; disabling Trainer fp16 "
+            "to avoid GradScaler unscale errors."
+        )
+    if not hasattr(model.config, "pad_token_id") or model.config.pad_token_id is None:
+        model.config.pad_token_id = tokenizer.pad_token_id
     if gradient_checkpointing:
         model.gradient_checkpointing_enable()
         if hasattr(model.config, "use_cache"):
@@ -207,28 +238,36 @@ def main() -> None:
     if len(tokenizer) > model.get_input_embeddings().weight.shape[0]:
         model.resize_token_embeddings(len(tokenizer))
 
-    training_args = TrainingArguments(
-        output_dir=str(output_dir),
-        num_train_epochs=num_epochs,
-        per_device_train_batch_size=per_device_batch_size,
-        per_device_eval_batch_size=per_device_batch_size,
-        gradient_accumulation_steps=gradient_accumulation_steps,
-        learning_rate=learning_rate,
-        warmup_steps=warmup_steps,
-        logging_steps=log_interval,
-        evaluation_strategy="steps" if "validation" in tokenized else "no",
-        eval_steps=log_interval if "validation" in tokenized else None,
-        save_strategy="steps",
-        save_steps=log_interval * 5,  # Save less frequently
-        save_total_limit=3,  # Keep only last 3 checkpoints
-        max_steps=args.max_steps if args.max_steps else -1,
-        fp16=use_fp16,
-        bf16=use_bf16,
-        gradient_checkpointing=gradient_checkpointing,
-        report_to=[],
-        load_best_model_at_end=True if "validation" in tokenized else False,
-        metric_for_best_model="eval_loss" if "validation" in tokenized else None,
-    )
+    training_kwargs: Dict[str, Any] = {
+        "output_dir": str(output_dir),
+        "num_train_epochs": num_epochs,
+        "per_device_train_batch_size": per_device_batch_size,
+        "per_device_eval_batch_size": per_device_batch_size,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "learning_rate": learning_rate,
+        "warmup_steps": warmup_steps,
+        "logging_steps": log_interval,
+        "eval_steps": log_interval if "validation" in tokenized else None,
+        "save_strategy": "steps",
+        "save_steps": log_interval * 5,  # Save less frequently
+        "save_total_limit": 3,  # Keep only last 3 checkpoints
+        "max_steps": args.max_steps if args.max_steps else -1,
+        "fp16": trainer_fp16,
+        "bf16": use_bf16,
+        "gradient_checkpointing": gradient_checkpointing,
+        "report_to": [],
+        "load_best_model_at_end": True if "validation" in tokenized else False,
+        "metric_for_best_model": "eval_loss" if "validation" in tokenized else None,
+    }
+
+    strategy_value = "steps" if "validation" in tokenized else "no"
+    training_params = inspect.signature(TrainingArguments.__init__).parameters
+    if "evaluation_strategy" in training_params:
+        training_kwargs["evaluation_strategy"] = strategy_value
+    else:
+        training_kwargs["eval_strategy"] = strategy_value
+
+    training_args = TrainingArguments(**training_kwargs)
 
     trainer = Trainer(
         model=model,
