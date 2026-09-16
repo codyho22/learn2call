@@ -1,7 +1,7 @@
 # Tool-RL: Function Calling for Compact Language Models
 
 ## Overview
-A production-ready pipeline for training small, open-source LLMs (1B–7B parameters) to reliably generate tool calls with correct function selection, argument validation, and JSON compliance using supervised fine-tuning and reinforcement learning.
+A pipeline for training small, open-source LLMs (1B–7B parameters) to reliably generate tool calls with correct function selection, argument validation, and JSON compliance using supervised fine-tuning and reinforcement learning.
 
 ## Key Features
 - **Data Pipeline:** Preprocesses APIGen-MT-5k (~5k examples) into prompt/target pairs with chat templates
