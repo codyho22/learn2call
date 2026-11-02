@@ -1,8 +1,9 @@
 """Reward shaping utilities for tool-use RL."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 @dataclass
@@ -13,6 +14,19 @@ class RewardConfig:
     schema_validity: float = 1.0
     argument_accuracy: float = 1.0
     no_call_penalty: float = -0.2
+
+
+def parse_prediction(text: str) -> Optional[Dict[str, Any]]:
+    """Parse the first JSON object in generated text; None if there is none."""
+
+    start = text.find("{")
+    if start == -1:
+        return None
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def compute_reward(prediction: Dict, reference: Dict, config: RewardConfig) -> float:

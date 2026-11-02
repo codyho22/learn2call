@@ -28,6 +28,24 @@ train:
   fp16: false
   bf16: true  # A100 supports bf16 - better than fp16 for training
 
+rl:
+  # init_model defaults to experiments/runs/<run_name>/final (the SFT output)
+  learning_rate: 1.0e-5
+  per_device_batch_size: 4
+  gradient_accumulation_steps: 2
+  num_generations: 4  # completions sampled per prompt (GRPO group size)
+  max_completion_length: 128
+  temperature: 1.0
+  beta: 0.04  # KL penalty against the reference (base weights under LoRA)
+  lora_r: 16
+  lora_alpha: 32
+
+reward:
+  tool_selection: 1.0
+  schema_validity: 1.0
+  argument_accuracy: 1.0
+  no_call_penalty: -0.2
+
 data:
   processed_path: "data/processed/train.jsonl"
   eval_path: "data/processed/val.jsonl"
