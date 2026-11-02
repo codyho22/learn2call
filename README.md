@@ -42,10 +42,9 @@ data/           raw + processed datasets (generated, gitignored)
 - **Hardware:** Supports 8GB+ VRAM (local) or A100 (cloud)
 - **Models:** Microsoft Phi-2, Mistral-7B-Instruct-v0.3 (easily extensible)
 
-## Project Status
-| Phase | Status | Output |
-|-------|--------|--------|
-| Data preprocessing | ✅ Complete | 19,699 train / 1,029 val examples (split by conversation) |
-| SFT baseline | ✅ Code complete | Checkpoint pipeline; full training run still to do |
-| RL fine-tuning | ✅ Code complete | GRPO + LoRA loop (smoke-tested); full run on SFT checkpoint still to do |
-| Evaluation suite | ✅ Code complete | `src/eval.py` tool-call metrics; baseline vs SFT vs RL comparison still to do |
+| Phase | Output |
+|-------|--------|
+| Data preprocessing | 19,699 train / 1,029 val examples (split by conversation) |
+| SFT baseline | Checkpoint pipeline; full training run still to do |
+| RL fine-tuning | GRPO + LoRA loop (smoke-tested); full run on SFT checkpoint still to do |
+| Evaluation suite | `src/eval.py` tool-call metrics; baseline vs SFT vs RL comparison still to do |
