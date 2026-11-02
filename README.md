@@ -31,7 +31,7 @@ See [docs/TRAINING.md](docs/TRAINING.md) for the full training guide, configurat
 ```
 src/            data.py, prompts.py, rewards.py, train_sft.py, train_rl.py, eval.py
 experiments/    configs (local Phi-2, Colab Mistral) and test_setup.py
-notebooks/      colab_Phi2.ipynb (clones this repo and runs SFT), explore.ipynb
+notebooks/      colab_Phi2.ipynb (clones this repo; base vs SFT vs RL on Phi-2), explore.ipynb
 docs/           TRAINING.md
 data/           raw + processed datasets (generated, gitignored)
 ```
