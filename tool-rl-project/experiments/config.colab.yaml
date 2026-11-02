@@ -7,14 +7,14 @@ seed: 42
 
 # Model configuration
 model:
-  # Mistral-7B for production experiments on A100
-  model_id: "mistralai/Mistral-7B"
+  # Mistral-7B Instruct v0.3 on A100 (gated: accept the license on HF and set HF_TOKEN)
+  model_id: "mistralai/Mistral-7B-Instruct-v0.3"
   trust_remote_code: false
-  tokenizer_id: "mistralai/Mistral-7B"
+  tokenizer_id: "mistralai/Mistral-7B-Instruct-v0.3"
 
 # Legacy fields (for backward compatibility)
-model_name: "mistralai/Mistral-7B"
-tokenizer_name: "mistralai/Mistral-7B"
+model_name: "mistralai/Mistral-7B-Instruct-v0.3"
+tokenizer_name: "mistralai/Mistral-7B-Instruct-v0.3"
 
 train:
   sft_epochs: 3

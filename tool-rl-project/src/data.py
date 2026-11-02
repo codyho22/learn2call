@@ -6,6 +6,8 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 
 from datasets import Dataset, load_dataset
 
+from prompts import render_system, render_tool_call
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_PATH = PROJECT_ROOT / "data" / "raw" / "apigen_mt5k"
 PROCESSED_PATH = PROJECT_ROOT / "data" / "processed"
@@ -28,72 +30,71 @@ def dump_raw_split(dataset: Dataset, split: str) -> Path:
     return out_path
 
 
-def extract_tool_call(messages: Sequence[Dict]) -> Dict | None:
-    """Return the first tool call (function_call from="" message value) if present."""
-
-    for message in messages:
-        if message.get("from", "").lower() == "function_call":
-            try:
-                call_dict = json.loads(message.get("value", "{}"))
-                if call_dict.get("name"):
-                    return call_dict
-            except (json.JSONDecodeError, TypeError):
-                continue
-    return None
+SKIPPED_TARGET_TOOLS = {"think"}
+ROLE_MAP = {"human": "user", "gpt": "assistant", "function_call": "assistant", "observation": "tool"}
 
 
-def extract_latest_user_message(messages: Sequence[Dict]) -> str | None:
-    """Return the most recent user (human) message content, if available."""
+def parse_tool_call(value: str) -> Dict | None:
+    """Parse a function_call message value into a {"name", "arguments"} dict."""
 
-    user_messages = [m for m in messages if m.get("from", "").lower() == "human"]
-    if not user_messages:
+    try:
+        call_dict = json.loads(value or "{}")
+    except (json.JSONDecodeError, TypeError):
         return None
-    return user_messages[-1].get("value", "").strip()
+    if not isinstance(call_dict, dict) or not call_dict.get("name"):
+        return None
+    arguments = call_dict.get("arguments") or {}
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return None
+    return {"name": call_dict["name"], "arguments": arguments}
 
 
-def format_prompt(tools: Sequence[Dict], user_message: str) -> str:
-    """Construct the textual prompt shown to the model."""
+def format_conversation(example: Dict) -> List[Dict]:
+    """Expand one conversation into a training example per tool call.
 
-    tools_json = json.dumps(tools, indent=2)
-    return (
-        "SYSTEM: You have access to these tools:\n"
-        f"{tools_json}\n\n"
-        f"USER: {user_message}\n"
-        "ASSISTANT:"
-    )
-
-
-def format_example(example: Dict) -> Dict | None:
-    """Convert a raw dataset record into a prompt/target pair."""
+    Each example's prompt is the conversation history before that call; tool
+    calls in the history are rendered in the same JSON format as targets.
+    """
 
     tools = example.get("tools", [])
-    # APIGen-MT-5k uses "conversations" instead of "messages"
-    conversations = example.get("conversations", [])
-    tool_call = extract_tool_call(conversations)
-    user_message = extract_latest_user_message(conversations)
-    if not tool_call or not user_message:
-        return None
+    if isinstance(tools, str):
+        tools = json.loads(tools)
+    system = render_system(tools)
+    # Calls to tools missing from the tool list are dataset noise: keep them in
+    # the history (they happened) but never train on them as targets.
+    tool_names = {tool.get("name") for tool in tools}
 
-    prompt = format_prompt(tools, user_message)
-    target = json.dumps(
-        {
-            "name": tool_call.get("name"),
-            "arguments": tool_call.get("arguments"),
-        },
-        ensure_ascii=True,
-    )
+    records: List[Dict] = []
+    turns: List[Dict[str, str]] = []
+    for message in example.get("conversations", []):
+        role = ROLE_MAP.get(message.get("from", "").lower())
+        if role is None:
+            continue
+        content = message.get("value", "")
 
-    return {"prompt": prompt, "target": target}
+        if message.get("from", "").lower() == "function_call":
+            call = parse_tool_call(content)
+            if call is None:
+                continue
+            content = render_tool_call(call["name"], call["arguments"])
+            has_user_turn = any(turn["role"] == "user" for turn in turns)
+            is_target_tool = call["name"] in tool_names and call["name"] not in SKIPPED_TARGET_TOOLS
+            if is_target_tool and has_user_turn:
+                records.append({"system": system, "turns": list(turns), "target": content})
+
+        turns.append({"role": role, "content": content})
+    return records
 
 
 def preprocess_dataset(dataset: Iterable[Dict]) -> List[Dict]:
-    """Apply formatting and drop records that lack tool calls."""
+    """Expand every conversation into per-tool-call examples."""
 
     processed: List[Dict] = []
     for record in dataset:
-        formatted = format_example(record)
-        if formatted:
-            processed.append(formatted)
+        processed.extend(format_conversation(record))
     return processed
 
 
@@ -102,7 +103,7 @@ def split_train_val(
     val_ratio: float,
     seed: int,
 ) -> Tuple[List[Dict], List[Dict]]:
-    """Shuffle and split processed examples into train/val subsets."""
+    """Shuffle and split examples (conversations) into train/val subsets."""
 
     if not examples or val_ratio <= 0:
         return examples, []
@@ -153,17 +154,21 @@ def main() -> None:
     for split in args.splits:
         dataset = load_apigen(split)
         raw_path = dump_raw_split(dataset, split)
-        processed_records = preprocess_dataset(dataset)
 
         if split == "train":
-            train_records, val_records = split_train_val(
-                processed_records, args.val_ratio, args.seed
+            # Split by conversation so no conversation appears in both sets.
+            train_convos, val_convos = split_train_val(
+                list(dataset), args.val_ratio, args.seed
             )
+            train_records = preprocess_dataset(train_convos)
             write_jsonl(train_records, PROCESSED_PATH / "train.jsonl")
-            if val_records:
+            print(f"Wrote {len(train_records)} train examples from {len(train_convos)} conversations")
+            if val_convos:
+                val_records = preprocess_dataset(val_convos)
                 write_jsonl(val_records, PROCESSED_PATH / "val.jsonl")
+                print(f"Wrote {len(val_records)} val examples from {len(val_convos)} conversations")
         else:
-            write_jsonl(processed_records, PROCESSED_PATH / f"{split}.jsonl")
+            write_jsonl(preprocess_dataset(dataset), PROCESSED_PATH / f"{split}.jsonl")
 
         print(
             f"Saved raw {split} split to {raw_path.relative_to(PROJECT_ROOT)} "

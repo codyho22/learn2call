@@ -1,5 +1,5 @@
 # Experiment configuration for local development
-# Change model.model_id to "mistralai/Mistral-7B" when running on Colab with A100
+# Change model.model_id to "mistralai/Mistral-7B-Instruct-v0.3" when running on Colab with A100
 
 run_name: debug
 seed: 42
@@ -8,7 +8,7 @@ seed: 42
 model:
   # Model ID from Hugging Face Hub
   # Local: "microsoft/phi-2" (small, fits on my GPU)
-  # Colab: "mistralai/Mistral-7B" (production model on A100)
+  # Colab: "mistralai/Mistral-7B-Instruct-v0.3" (gated model on A100)
   model_id: "microsoft/phi-2"
   trust_remote_code: true
   

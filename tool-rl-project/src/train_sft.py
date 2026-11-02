@@ -18,6 +18,8 @@ from transformers import (
     set_seed,
 )
 
+from prompts import build_prompt_ids, encode_target
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -70,36 +72,21 @@ def tokenize_examples(
     labels_list: List[List[int]] = []
 
     eos_id = tokenizer.eos_token_id
-    for prompt, target in zip(examples["prompt"], examples["target"]):
-        prompt_ids = tokenizer(
-            prompt,
-            add_special_tokens=False,
-            truncation=True,
-            max_length=max_length,
-            verbose=False,
-        ).input_ids
-        target_ids = tokenizer(
-            target,
-            add_special_tokens=False,
-            truncation=True,
-            max_length=max_length,
-            verbose=False,
-        ).input_ids
+    for system, turns, target in zip(examples["system"], examples["turns"], examples["target"]):
+        target_ids = encode_target(target, tokenizer)
         if eos_id is not None:
             target_ids = target_ids + [eos_id]
 
+        # Fit the prompt into whatever room the (never truncated) target leaves.
+        # Examples where even the tool header + target don't fit get no labels
+        # and are filtered out after tokenization.
+        try:
+            prompt_ids = build_prompt_ids(system, turns, tokenizer, max_length - len(target_ids))
+        except ValueError:
+            prompt_ids, target_ids = [], []
+
         input_ids = prompt_ids + target_ids
         labels = [-100] * len(prompt_ids) + target_ids
-
-        if max_length and len(input_ids) > max_length:
-            input_ids = input_ids[:max_length]
-            labels = labels[:max_length]
-        
-        # Ensure labels is same length as input_ids (shouldn't be needed, but safety check)
-        if len(labels) < len(input_ids):
-            labels = labels + [-100] * (len(input_ids) - len(labels))
-        elif len(labels) > len(input_ids):
-            labels = labels[:len(input_ids)]
 
         attention_mask = [1] * len(input_ids)
         input_ids_list.append(input_ids)
@@ -195,6 +182,12 @@ def main() -> None:
         batched=True,
         remove_columns=dataset["train"].column_names,
     )
+    for split in list(tokenized.keys()):
+        before = len(tokenized[split])
+        tokenized[split] = tokenized[split].filter(lambda row: len(row["input_ids"]) > 0)
+        dropped = before - len(tokenized[split])
+        if dropped:
+            print(f"Dropped {dropped}/{before} {split} examples whose target does not fit in max_length")
 
     per_device_batch_size = get_cfg(config, "train", "per_device_batch_size", default=2)
     gradient_accumulation_steps = get_cfg(config, "train", "gradient_accumulation_steps", default=1)

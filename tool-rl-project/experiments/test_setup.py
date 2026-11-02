@@ -7,6 +7,7 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from prompts import render_prompt
 from train_sft import build_tokenizer, tokenize_examples, load_config, get_cfg
 
 
@@ -28,16 +29,25 @@ def test_data_format():
         return False
     
     # Check a few examples
-    with train_path.open("r") as f:
-        examples = [json.loads(line) for line in f.readlines()[:5]]
+    with train_path.open("r", encoding="utf-8") as f:
+        examples = [json.loads(next(f)) for _ in range(5)]
     
     for i, ex in enumerate(examples):
-        if "prompt" not in ex or "target" not in ex:
-            print(f"[FAIL] Example {i} missing 'prompt' or 'target' key")
+        if not {"system", "turns", "target"} <= ex.keys():
+            print(f"[FAIL] Example {i} missing 'system', 'turns' or 'target' key")
             return False
-            
-        if not isinstance(ex["prompt"], str) or not isinstance(ex["target"], str):
-            print(f"[FAIL] Example {i} has non-string values")
+
+        if not isinstance(ex["system"], str) or not isinstance(ex["target"], str):
+            print(f"[FAIL] Example {i} has non-string system/target")
+            return False
+
+        if not isinstance(ex["turns"], list) or not ex["turns"]:
+            print(f"[FAIL] Example {i} has no conversation turns")
+            return False
+
+        target = json.loads(ex["target"])
+        if not target.get("name") or not isinstance(target.get("arguments"), dict):
+            print(f"[FAIL] Example {i} target is not a {{name, arguments}} tool call")
             return False
     
     print(f"[OK] Found {train_path.stat().st_size // 1024 // 1024}MB train data")
@@ -64,7 +74,8 @@ def test_tokenization():
     
     # Create a small test example
     test_examples = {
-        "prompt": ["SYSTEM: Test\nUSER: Hello\nASSISTANT:"],
+        "system": ["SYSTEM: You have access to these tools:\ntest_func(arg: string)\n\n"],
+        "turns": [[{"role": "user", "content": "Hello"}]],
         "target": ['{"name": "test_func", "arguments": {"arg": "value"}}'],
     }
     
@@ -79,6 +90,13 @@ def test_tokenization():
         # Check lengths match
         if len(result['input_ids'][0]) != len(result['labels'][0]):
             print(f"[FAIL] Length mismatch: input_ids != labels")
+            return False
+
+        # The full target (+ EOS) must be supervised
+        target_ids = tokenizer(" " + test_examples["target"][0], add_special_tokens=False).input_ids
+        supervised = [t for t in result['labels'][0] if t != -100]
+        if supervised[:len(target_ids)] != target_ids:
+            print(f"[FAIL] Target tokens are not fully present in labels")
             return False
         
         return True
@@ -104,20 +122,27 @@ def test_sequence_lengths():
     tokenizer = build_tokenizer(tokenizer_id)
     
     # Sample 100 examples
-    with train_path.open("r") as f:
-        examples = [json.loads(line) for line in f.readlines()[:100]]
+    with train_path.open("r", encoding="utf-8") as f:
+        examples = [json.loads(next(f)) for _ in range(100)]
     
     lengths = []
     truncated = 0
-    
+
     for ex in examples:
-        prompt_len = len(tokenizer(ex["prompt"], add_special_tokens=False).input_ids)
-        target_len = len(tokenizer(ex["target"], add_special_tokens=False).input_ids)
+        prompt_len = len(tokenizer(render_prompt(ex["system"], ex["turns"]), add_special_tokens=False).input_ids)
+        target_len = len(tokenizer(" " + ex["target"], add_special_tokens=False).input_ids)
         total_len = prompt_len + target_len + 1  # +1 for EOS
         lengths.append(total_len)
-        
+
         if total_len > max_length:
             truncated += 1
+
+    fitted = tokenize_examples(
+        {key: [ex[key] for ex in examples] for key in ("system", "turns", "target")},
+        tokenizer,
+        max_length,
+    )
+    no_target = sum(1 for labels in fitted["labels"] if all(t == -100 for t in labels))
     
     avg_len = sum(lengths) / len(lengths)
     max_len = max(lengths)
@@ -128,14 +153,18 @@ def test_sequence_lengths():
     print(f"  Min: {min_len}")
     print(f"  Max: {max_len}")
     print(f"  Max length config: {max_length}")
-    print(f"  Truncated: {truncated}/{len(lengths)} ({100*truncated/len(lengths):.1f}%)")
-    
-    if truncated > 50:
-        print(f"[WARN]  Warning: {truncated}% of sequences will be truncated")
-        print(f"   Consider increasing max_length in config.yaml")
+    print(f"  Oldest turns dropped: {truncated}/{len(lengths)} ({100*truncated/len(lengths):.1f}%)")
+    print(f"  Fitted max length: {max(len(ids) for ids in fitted['input_ids'])}")
+    print(f"  Examples with no target tokens: {no_target}/{len(lengths)}")
+
+    if any(len(ids) > max_length for ids in fitted["input_ids"]):
+        print(f"[FAIL] Fitted sequences exceed max_length")
+        return False
+    if no_target:
+        print(f"[WARN]  {no_target} examples will be dropped (target does not fit)")
     else:
-        print(f"[OK] Truncation rate looks acceptable")
-    
+        print(f"[OK] Every target fits within max_length")
+
     return True
 
 
@@ -172,7 +201,7 @@ def main():
     
     all_passed = all(r for _, r in results)
     if all_passed:
-        print("\n🎉 All tests passed! Ready to train.")
+        print("\n[OK] All tests passed! Ready to train.")
         return 0
     else:
         print("\n[WARN]  Some tests failed. Please fix before training.")
