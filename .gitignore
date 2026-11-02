@@ -12,11 +12,11 @@ venv/
 ENV/
 
 # Data files (too large for git)
-tool-rl-project/data/raw/
-tool-rl-project/data/processed/
+data/raw/
+data/processed/
 
 # Model checkpoints and outputs
-tool-rl-project/experiments/runs/
+experiments/runs/
 *.pt
 *.pth
 *.bin
